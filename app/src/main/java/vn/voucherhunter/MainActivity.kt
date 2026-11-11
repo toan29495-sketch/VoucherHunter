@@ -57,8 +57,19 @@ fun VoucherHunterScreen() {
         SimpleDateFormat("HH:mm:ss.SSS", Locale("vi", "VN")).format(Date(now))
     }
     fun openShopee() {
-        try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shopee.vn/"))) }
-        catch (_: Exception) { status = "Không mở được Shopee" }
+        try {
+            // Ưu tiên mở ứng dụng Shopee đã cài trên máy bằng package Android chính thức.
+            val shopeeLaunch = context.packageManager.getLaunchIntentForPackage("com.shopee.vn")
+            if (shopeeLaunch != null) {
+                shopeeLaunch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(shopeeLaunch)
+            } else {
+                // Nếu chưa cài Shopee, mở trang web để người dùng tiếp tục.
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shopee.vn/")))
+            }
+        } catch (_: Exception) {
+            status = "Không mở được Shopee. Hãy kiểm tra ứng dụng đã cài đặt chưa."
+        }
     }
     fun vibrate() {
         try {
