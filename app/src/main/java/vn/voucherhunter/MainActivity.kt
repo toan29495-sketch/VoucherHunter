@@ -116,19 +116,38 @@ fun VoucherHunterScreen() {
     }
 
     fun openShopee() {
+        val shopeePackage = "com.shopee.vn"
         try {
             val link = voucherLink.trim()
-            val intent = if (link.startsWith("https://") && (Uri.parse(link).host == "shopee.vn" ||
-                    Uri.parse(link).host?.endsWith(".shopee.vn") == true ||
-                    Uri.parse(link).host == "vn.shp.ee")) {
-                Intent(Intent.ACTION_VIEW, Uri.parse(link))
+            val validShopeeLink = link.startsWith("https://") &&
+                (Uri.parse(link).host == "shopee.vn" ||
+                 Uri.parse(link).host?.endsWith(".shopee.vn") == true ||
+                 Uri.parse(link).host == "vn.shp.ee")
+            if (validShopeeLink) {
+                // Chỉ định rõ ứng dụng Shopee làm đích, không để Android tự chọn trình duyệt.
+                val deepLinkIntent = Intent(Intent.ACTION_VIEW, Uri.parse(link)).apply {
+                    setPackage(shopeePackage)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    context.startActivity(deepLinkIntent)
+                    status = "Đã gửi đường dẫn tới ứng dụng Shopee"
+                } catch (_: Exception) {
+                    val launch = context.packageManager.getLaunchIntentForPackage(shopeePackage)
+                    if (launch != null) {
+                        context.startActivity(launch)
+                        status = "Đã mở Shopee; đường dẫn voucher không được app tiếp nhận"
+                    } else status = "Không tìm thấy app Shopee (com.shopee.vn) trên máy"
+                }
             } else {
-                context.packageManager.getLaunchIntentForPackage("com.shopee.vn")
-                    ?: Intent(Intent.ACTION_VIEW, Uri.parse("https://shopee.vn/"))
+                val launch = context.packageManager.getLaunchIntentForPackage(shopeePackage)
+                if (launch != null) {
+                    context.startActivity(launch)
+                    status = "Đã yêu cầu mở ứng dụng Shopee"
+                } else status = "Không tìm thấy app Shopee (com.shopee.vn). Hãy kiểm tra app đã cài chưa."
             }
-            context.startActivity(intent)
         } catch (_: Exception) {
-            status = "Không mở được Shopee. Kiểm tra đường dẫn hoặc ứng dụng."
+            status = "Không mở được ứng dụng Shopee. Hãy kiểm tra app đã cài đặt chưa."
         }
     }
 
