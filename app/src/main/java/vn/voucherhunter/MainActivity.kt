@@ -15,6 +15,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import org.json.JSONArray
+import org.json.JSONObject
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,6 +84,21 @@ fun VoucherHunterScreen() {
     var fired0 by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("Chưa kích hoạt đếm ngược") }
     var log by remember { mutableStateOf("Chưa có sự kiện") }
+    var voucherName by remember { mutableStateOf("Voucher SPayLater 11 triệu") }
+    var savedVouchers by remember {
+        mutableStateOf(run {
+            val arr = JSONArray(prefs.getString("voucher_list", "[]") ?: "[]")
+            (0 until arr.length()).map { i -> arr.getJSONObject(i) }
+        })
+    }
+    var selectedVoucher by remember { mutableIntStateOf(-1) }
+
+    fun persistVouchers(items: List<JSONObject>) {
+        val arr = JSONArray()
+        items.forEach { arr.put(it) }
+        prefs.edit().putString("voucher_list", arr.toString()).apply()
+        savedVouchers = items
+    }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -206,6 +223,58 @@ fun VoucherHunterScreen() {
                 alertVibration(context)
                 status = "Đã thử rung"
             }, modifier = Modifier.fillMaxWidth()) { Text("Thử rung cảnh báo") }
+            Text("DANH SÁCH VOUCHER MỤC TIÊU", fontWeight = FontWeight.Bold)
+            OutlinedTextField(voucherName, { voucherName = it },
+                label = { Text("Tên voucher") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = {
+                val item = JSONObject().put("name", voucherName.ifBlank { "Voucher mới" })
+                    .put("amount", amount).put("minimum", minimum)
+                    .put("time", targetTime).put("link", voucherLink)
+                    .put("state", "Chưa kiểm tra")
+                persistVouchers(savedVouchers + item)
+                selectedVoucher = savedVouchers.size
+                log = "Đã thêm mục tiêu: ${item.optString("name")}"
+            }, modifier = Modifier.fillMaxWidth()) { Text("THÊM VOUCHER VÀO DANH SÁCH") }
+            if (savedVouchers.isEmpty()) {
+                Text("Chưa có voucher nào. Nhập thông tin rồi nhấn Thêm voucher.")
+            } else {
+                savedVouchers.forEachIndexed { index, item ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(item.optString("name"), fontWeight = FontWeight.Bold)
+                            Text("Giảm tối đa ${item.optString("amount")}đ · Đơn tối thiểu ${item.optString("minimum")}đ")
+                            Text("Giờ mở: ${item.optString("time")} · Trạng thái: ${item.optString("state")}")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = {
+                                    amount = item.optString("amount")
+                                    minimum = item.optString("minimum")
+                                    targetTime = item.optString("time")
+                                    voucherLink = item.optString("link")
+                                    voucherName = item.optString("name")
+                                    selectedVoucher = index
+                                    log = "Đã chọn ${item.optString("name")}"
+                                }) { Text("Chọn mục tiêu") }
+                                OutlinedButton(onClick = {
+                                    val updated = savedVouchers.toMutableList()
+                                    updated[index] = JSONObject(item.toString()).put("state", "Đã kiểm tra thủ công")
+                                    persistVouchers(updated)
+                                    log = "Đã cập nhật trạng thái kiểm tra"
+                                }) { Text("Đánh dấu đã kiểm tra") }
+                                OutlinedButton(onClick = {
+                                    persistVouchers(savedVouchers.filterIndexed { i, _ -> i != index })
+                                    if (selectedVoucher == index) selectedVoucher = -1
+                                }) { Text("Xóa") }
+                            }
+                            if (item.optString("link").isNotBlank()) {
+                                TextButton(onClick = {
+                                    voucherLink = item.optString("link")
+                                    openShopee()
+                                }) { Text("Mở voucher trong Shopee") }
+                            }
+                        }
+                    }
+                }
+            }
             Text("TRẠNG THÁI", fontWeight = FontWeight.Bold)
             Text(status)
             Text("NHẬT KÝ", fontWeight = FontWeight.Bold)
