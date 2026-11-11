@@ -10,13 +10,14 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import org.json.JSONArray
-import org.json.JSONObject
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,7 +25,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.delay
+import org.json.JSONArray
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -39,13 +45,13 @@ class MainActivity : ComponentActivity() {
 
 private fun nextOccurrence(time: String, now: Long): Long? {
     val parts = time.split(":").mapNotNull { it.toIntOrNull() }
-    if (parts.size != 3 || parts[0] !in 0..23 || parts[1] !in 0..59 || parts[2] !in 0..59) return null
+    if (parts.size !in 2..3 || parts[0] !in 0..23 || parts[1] !in 0..59 ||
+        (parts.size == 3 && parts[2] !in 0..59)) return null
+    val p = if (parts.size == 2) parts + 0 else parts
     val cal = Calendar.getInstance().apply {
         timeInMillis = now
-        set(Calendar.HOUR_OF_DAY, parts[0])
-        set(Calendar.MINUTE, parts[1])
-        set(Calendar.SECOND, parts[2])
-        set(Calendar.MILLISECOND, 0)
+        set(Calendar.HOUR_OF_DAY, p[0]); set(Calendar.MINUTE, p[1])
+        set(Calendar.SECOND, p[2]); set(Calendar.MILLISECOND, 0)
     }
     if (cal.timeInMillis <= now) cal.add(Calendar.DAY_OF_YEAR, 1)
     return cal.timeInMillis
@@ -58,14 +64,34 @@ private fun durationText(ms: Long): String {
 
 private fun alertVibration(context: Context) {
     try {
-        val v = if (Build.VERSION.SDK_INT >= 31) {
+        val v = if (Build.VERSION.SDK_INT >= 31)
             (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
-        } else {
+        else {
             @Suppress("DEPRECATION")
             (context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator)
         }
         v.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
     } catch (_: Exception) { }
+}
+
+private fun parseVoucherText(raw: String): JSONObject {
+    val text = raw.replace("\\u00a0", " ").replace(",", ".")
+    fun findAmount(pattern: Regex): String {
+        val m = pattern.find(text) ?: return ""
+        val digits = m.groupValues.last().replace(Regex("[^0-9]"), "")
+        return digits
+    }
+    val discount = findAmount(Regex("(?i)(?:giảm|giảm giá|giảm đến|ưu đãi)[^0-9]{0,25}([0-9][0-9. ]{2,})"))
+    val minimum = findAmount(Regex("(?i)(?:đơn tối thiểu|đơn từ|tối thiểu|minimum spend)[^0-9]{0,25}([0-9][0-9. ]{2,})"))
+    val time = Regex("\\b([01]?\\d|2[0-3]):([0-5]\\d)(?::([0-5]\\d))?\\b").find(text)?.value ?: ""
+    val name = text.lineSequence().map { it.trim() }.firstOrNull { it.isNotBlank() }?.take(90) ?: "Voucher từ nội dung"
+    return JSONObject()
+        .put("name", name)
+        .put("amount", discount)
+        .put("minimum", minimum)
+        .put("time", time)
+        .put("rawText", raw)
+        .put("state", "Đã phân tích — cần xác minh trên Shopee")
 }
 
 @Composable
@@ -74,203 +100,168 @@ fun VoucherHunterScreen() {
     val prefs = remember { context.getSharedPreferences("voucher_settings", Context.MODE_PRIVATE) }
     var amount by remember { mutableStateOf(prefs.getString("amount", "11000000") ?: "11000000") }
     var minimum by remember { mutableStateOf(prefs.getString("minimum", "5000000") ?: "5000000") }
-    var targetTime by remember { mutableStateOf(prefs.getString("time", "00:00:00") ?: "00:00:00") }
-    var voucherLink by remember { mutableStateOf(prefs.getString("link", "") ?: "") }
+    var targetTime by remember { mutableStateOf(prefs.getString("time", "00:00") ?: "00:00") }
+    var voucherName by remember { mutableStateOf("Voucher SPayLater") }
+    var rawText by remember { mutableStateOf("") }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var armed by remember { mutableStateOf(false) }
     var targetAt by remember { mutableLongStateOf(0L) }
     var fired60 by remember { mutableStateOf(false) }
     var fired10 by remember { mutableStateOf(false) }
     var fired0 by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Chưa kích hoạt đếm ngược") }
+    var status by remember { mutableStateOf("Sẵn sàng nhận ảnh hoặc văn bản voucher") }
     var log by remember { mutableStateOf("Chưa có sự kiện") }
-    var voucherName by remember { mutableStateOf("Voucher SPayLater 11 triệu") }
+    var busy by remember { mutableStateOf(false) }
     var savedVouchers by remember {
         mutableStateOf(run {
             val arr = JSONArray(prefs.getString("voucher_list", "[]") ?: "[]")
-            (0 until arr.length()).map { i -> arr.getJSONObject(i) }
+            (0 until arr.length()).map { arr.getJSONObject(it) }
         })
     }
-    var selectedVoucher by remember { mutableIntStateOf(-1) }
 
-    fun persistVouchers(items: List<JSONObject>) {
+    fun persist(items: List<JSONObject>) {
         val arr = JSONArray()
         items.forEach { arr.put(it) }
         prefs.edit().putString("voucher_list", arr.toString()).apply()
         savedVouchers = items
     }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            now = System.currentTimeMillis()
-            delay(100)
+    fun analyze(raw: String, source: String) {
+        val parsed = parseVoucherText(raw)
+        if (parsed.optString("amount").isNotBlank()) amount = parsed.optString("amount")
+        if (parsed.optString("minimum").isNotBlank()) minimum = parsed.optString("minimum")
+        if (parsed.optString("time").isNotBlank()) targetTime = parsed.optString("time")
+        voucherName = parsed.optString("name").ifBlank { "Voucher từ $source" }
+        rawText = raw
+        status = "Đã đọc nội dung từ $source. Hãy rà soát các trường nhận diện."
+        log = "Phân tích $source lúc " + SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+    }
+
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
+        if (uri != null) {
+            busy = true
+            status = "Đang đọc chữ trong ảnh…"
+            try {
+                val image = InputImage.fromFilePath(context, uri)
+                TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS).process(image)
+                    .addOnSuccessListener { result ->
+                        analyze(result.text, "ảnh")
+                        busy = false
+                        if (result.text.isBlank()) status = "Không nhận diện được chữ. Hãy thử ảnh rõ và đủ sáng hơn."
+                    }
+                    .addOnFailureListener { e ->
+                        busy = false
+                        status = "Không đọc được ảnh: ${e.localizedMessage ?: "lỗi OCR"}"
+                    }
+            } catch (e: Exception) {
+                busy = false
+                status = "Không mở được ảnh: ${e.localizedMessage ?: "lỗi"}"
+            }
         }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) { now = System.currentTimeMillis(); delay(250) }
     }
 
     LaunchedEffect(now, armed, targetAt) {
         if (armed && targetAt > 0) {
             val remaining = targetAt - now
             if (!fired60 && remaining <= 60000 && remaining > 0) {
-                fired60 = true
-                alertVibration(context)
-                status = "Còn dưới 60 giây"
-                log = "Đã rung cảnh báo mốc 60 giây"
+                fired60 = true; alertVibration(context); status = "Còn dưới 60 giây"; log = "Cảnh báo 60 giây"
             }
             if (!fired10 && remaining <= 10000 && remaining > 0) {
-                fired10 = true
-                alertVibration(context)
-                status = "Còn dưới 10 giây — chuẩn bị nhận voucher"
-                log = "Đã rung cảnh báo mốc 10 giây"
+                fired10 = true; alertVibration(context); status = "Còn dưới 10 giây — chuẩn bị"; log = "Cảnh báo 10 giây"
             }
             if (!fired0 && remaining <= 0) {
-                fired0 = true
-                alertVibration(context)
-                status = "ĐẾN GIỜ! Hãy nhận voucher trong Shopee"
-                log = "Đã rung tại thời điểm mục tiêu"
-                armed = false
+                fired0 = true; alertVibration(context); status = "ĐẾN GIỜ SĂN VOUCHER"; log = "Đã đến giờ mục tiêu"; armed = false
             }
         }
     }
 
     fun openShopee() {
-        val shopeePackage = "com.shopee.vn"
         try {
-            val link = voucherLink.trim()
-            val validShopeeLink = link.startsWith("https://") &&
-                (Uri.parse(link).host == "shopee.vn" ||
-                 Uri.parse(link).host?.endsWith(".shopee.vn") == true ||
-                 Uri.parse(link).host == "vn.shp.ee")
-            if (validShopeeLink) {
-                // Chỉ định rõ ứng dụng Shopee làm đích, không để Android tự chọn trình duyệt.
-                val deepLinkIntent = Intent(Intent.ACTION_VIEW, Uri.parse(link)).apply {
-                    setPackage(shopeePackage)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                try {
-                    context.startActivity(deepLinkIntent)
-                    status = "Đã gửi đường dẫn tới ứng dụng Shopee"
-                } catch (_: Exception) {
-                    val launch = context.packageManager.getLaunchIntentForPackage(shopeePackage)
-                    if (launch != null) {
-                        context.startActivity(launch)
-                        status = "Đã mở Shopee; đường dẫn voucher không được app tiếp nhận"
-                    } else status = "Không tìm thấy app Shopee (com.shopee.vn) trên máy"
-                }
-            } else {
-                val launch = context.packageManager.getLaunchIntentForPackage(shopeePackage)
-                if (launch != null) {
-                    context.startActivity(launch)
-                    status = "Đã yêu cầu mở ứng dụng Shopee"
-                } else status = "Không tìm thấy app Shopee (com.shopee.vn). Hãy kiểm tra app đã cài chưa."
-            }
-        } catch (_: Exception) {
-            status = "Không mở được ứng dụng Shopee. Hãy kiểm tra app đã cài đặt chưa."
-        }
+            val launch = context.packageManager.getLaunchIntentForPackage("com.shopee.vn")
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(launch)
+                status = "Đã mở Shopee. Tìm voucher theo tên và điều kiện đã phân tích."
+            } else status = "Chưa tìm thấy ứng dụng Shopee trên thiết bị."
+        } catch (_: Exception) { status = "Không mở được Shopee." }
     }
 
-    val clock = SimpleDateFormat("HH:mm:ss.SSS", Locale("vi", "VN")).format(Date(now))
+    val clock = SimpleDateFormat("HH:mm:ss", Locale("vi", "VN")).format(Date(now))
     val countdown = if (armed) durationText(targetAt - now) else "--:--:--"
 
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("VOUCHER HUNTER 1.1", fontSize = 23.sp, fontWeight = FontWeight.Black)
-            Text("Trợ lý canh thời điểm săn voucher", style = MaterialTheme.typography.bodyMedium)
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("VOUCHER HUNTER 1.2", fontSize = 23.sp, fontWeight = FontWeight.Black)
+            Text("Tự đọc voucher từ ảnh / văn bản · quản lý mục tiêu · canh giờ")
             Card(shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("GIỜ ĐIỆN THOẠI")
                     Text(clock, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(8.dp))
                     Text("ĐẾM NGƯỢC", style = MaterialTheme.typography.labelLarge)
-                    Text(countdown, fontSize = 38.sp, fontWeight = FontWeight.Bold)
-                    Text("Giữ ứng dụng mở để nhận cảnh báo", style = MaterialTheme.typography.bodySmall)
+                    Text(countdown, fontSize = 36.sp, fontWeight = FontWeight.Bold)
                 }
             }
-            OutlinedTextField(amount, { amount = it.filter(Char::isDigit) },
-                label = { Text("Mức giảm mục tiêu (đ)") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(minimum, { minimum = it.filter(Char::isDigit) },
-                label = { Text("Đơn tối thiểu (đ)") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(targetTime, { targetTime = it },
-                label = { Text("Giờ mở voucher (HH:mm:ss)") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(voucherLink, { voucherLink = it },
-                label = { Text("Link trang voucher Shopee (nếu có)") },
-                modifier = Modifier.fillMaxWidth(), minLines = 2)
+
+            Text("1. ĐẦU VÀO VOUCHER", fontWeight = FontWeight.Bold)
+            OutlinedButton(onClick = { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Text(if (busy) "ĐANG ĐỌC ẢNH…" else "CHỌN ẢNH / ẢNH CHỤP MÀN HÌNH")
+            }
+            OutlinedTextField(rawText, { rawText = it }, label = { Text("Dán nội dung / mô tả voucher") },
+                modifier = Modifier.fillMaxWidth(), minLines = 4)
+            Button(onClick = { if (rawText.isBlank()) status = "Hãy chọn ảnh hoặc dán nội dung trước."
+                else analyze(rawText, "văn bản") }, modifier = Modifier.fillMaxWidth()) { Text("TỰ PHÂN TÍCH VĂN BẢN") }
+
+            Text("2. THÔNG TIN ĐÃ NHẬN DIỆN (có thể sửa)", fontWeight = FontWeight.Bold)
+            OutlinedTextField(voucherName, { voucherName = it }, label = { Text("Tên / mô tả voucher") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(amount, { amount = it.filter(Char::isDigit) }, label = { Text("Mức giảm (đ)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(minimum, { minimum = it.filter(Char::isDigit) }, label = { Text("Đơn tối thiểu (đ)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(targetTime, { targetTime = it }, label = { Text("Giờ mở voucher (HH:mm hoặc HH:mm:ss)") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = {
+                val item = JSONObject().put("name", voucherName).put("amount", amount)
+                    .put("minimum", minimum).put("time", targetTime).put("rawText", rawText)
+                    .put("state", "Đã lưu — chờ kiểm tra")
+                persist(savedVouchers + item)
+                status = "Đã lưu mục tiêu voucher"; log = "Đã thêm: $voucherName"
+            }, modifier = Modifier.fillMaxWidth()) { Text("LƯU MỤC TIÊU VOUCHER") }
+
+            Text("3. TỰ ĐỘNG CANH GIỜ", fontWeight = FontWeight.Bold)
             Button(onClick = {
                 val t = nextOccurrence(targetTime, System.currentTimeMillis())
-                if (t == null) {
-                    status = "Giờ không hợp lệ. Nhập HH:mm:ss, ví dụ 00:00:00"
-                } else {
-                    prefs.edit().putString("amount", amount).putString("minimum", minimum)
-                        .putString("time", targetTime).putString("link", voucherLink).apply()
-                    targetAt = t
-                    armed = true
-                    fired60 = false
-                    fired10 = false
-                    fired0 = false
-                    status = "Đang canh giờ. Cảnh báo tại 60s, 10s và 0s."
-                    log = "Đã lưu cấu hình và bật đếm ngược"
+                if (t == null) status = "Giờ không hợp lệ. Ví dụ 09:00 hoặc 09:00:00"
+                else {
+                    prefs.edit().putString("amount", amount).putString("minimum", minimum).putString("time", targetTime).apply()
+                    targetAt = t; armed = true; fired60 = false; fired10 = false; fired0 = false
+                    status = "Đã bật canh giờ và cảnh báo rung"; log = "Bắt đầu canh giờ"
                 }
-            }, modifier = Modifier.fillMaxWidth()) { Text("LƯU VÀ BẬT CANH GIỜ") }
-            OutlinedButton(onClick = {
-                armed = false
-                status = "Đã dừng canh giờ"
-            }, modifier = Modifier.fillMaxWidth()) { Text("Dừng canh giờ") }
-            OutlinedButton(onClick = { openShopee() }, modifier = Modifier.fillMaxWidth()) {
-                Text("MỞ SHOPEE / TRANG VOUCHER")
-            }
-            OutlinedButton(onClick = {
-                alertVibration(context)
-                status = "Đã thử rung"
-            }, modifier = Modifier.fillMaxWidth()) { Text("Thử rung cảnh báo") }
-            Text("DANH SÁCH VOUCHER MỤC TIÊU", fontWeight = FontWeight.Bold)
-            OutlinedTextField(voucherName, { voucherName = it },
-                label = { Text("Tên voucher") }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = {
-                val item = JSONObject().put("name", voucherName.ifBlank { "Voucher mới" })
-                    .put("amount", amount).put("minimum", minimum)
-                    .put("time", targetTime).put("link", voucherLink)
-                    .put("state", "Chưa kiểm tra")
-                persistVouchers(savedVouchers + item)
-                selectedVoucher = savedVouchers.size
-                log = "Đã thêm mục tiêu: ${item.optString("name")}"
-            }, modifier = Modifier.fillMaxWidth()) { Text("THÊM VOUCHER VÀO DANH SÁCH") }
-            if (savedVouchers.isEmpty()) {
-                Text("Chưa có voucher nào. Nhập thông tin rồi nhấn Thêm voucher.")
-            } else {
-                savedVouchers.forEachIndexed { index, item ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(item.optString("name"), fontWeight = FontWeight.Bold)
-                            Text("Giảm tối đa ${item.optString("amount")}đ · Đơn tối thiểu ${item.optString("minimum")}đ")
-                            Text("Giờ mở: ${item.optString("time")} · Trạng thái: ${item.optString("state")}")
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(onClick = {
-                                    amount = item.optString("amount")
-                                    minimum = item.optString("minimum")
-                                    targetTime = item.optString("time")
-                                    voucherLink = item.optString("link")
-                                    voucherName = item.optString("name")
-                                    selectedVoucher = index
-                                    log = "Đã chọn ${item.optString("name")}"
-                                }) { Text("Chọn mục tiêu") }
-                                OutlinedButton(onClick = {
-                                    val updated = savedVouchers.toMutableList()
-                                    updated[index] = JSONObject(item.toString()).put("state", "Đã kiểm tra thủ công")
-                                    persistVouchers(updated)
-                                    log = "Đã cập nhật trạng thái kiểm tra"
-                                }) { Text("Đánh dấu đã kiểm tra") }
-                                OutlinedButton(onClick = {
-                                    persistVouchers(savedVouchers.filterIndexed { i, _ -> i != index })
-                                    if (selectedVoucher == index) selectedVoucher = -1
-                                }) { Text("Xóa") }
-                            }
-                            if (item.optString("link").isNotBlank()) {
-                                TextButton(onClick = {
-                                    voucherLink = item.optString("link")
-                                    openShopee()
-                                }) { Text("Mở voucher trong Shopee") }
-                            }
+            }, modifier = Modifier.fillMaxWidth()) { Text("BẬT CANH GIỜ") }
+            OutlinedButton(onClick = { armed = false; status = "Đã dừng canh giờ" }, modifier = Modifier.fillMaxWidth()) { Text("DỪNG CANH GIỜ") }
+            OutlinedButton(onClick = { alertVibration(context); openShopee() }, modifier = Modifier.fillMaxWidth()) { Text("ĐẾN SHOPEE ĐỂ KIỂM TRA VOUCHER") }
+
+            Text("4. DANH SÁCH MỤC TIÊU", fontWeight = FontWeight.Bold)
+            if (savedVouchers.isEmpty()) Text("Chưa có mục tiêu nào.")
+            savedVouchers.forEachIndexed { index, item ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(item.optString("name"), fontWeight = FontWeight.Bold)
+                        Text("Giảm: ${item.optString("amount").ifBlank { "Chưa nhận diện" }}đ · Đơn tối thiểu: ${item.optString("minimum").ifBlank { "Chưa nhận diện" }}đ")
+                        Text("Giờ: ${item.optString("time").ifBlank { "Chưa rõ" }} · ${item.optString("state")}")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = {
+                                voucherName = item.optString("name"); amount = item.optString("amount")
+                                minimum = item.optString("minimum"); targetTime = item.optString("time")
+                                rawText = item.optString("rawText"); status = "Đã nạp lại mục tiêu"
+                            }) { Text("Nạp") }
+                            TextButton(onClick = {
+                                persist(savedVouchers.filterIndexed { i, _ -> i != index })
+                                status = "Đã xóa mục tiêu"
+                            }) { Text("Xóa") }
                         }
                     }
                 }
@@ -279,7 +270,7 @@ fun VoucherHunterScreen() {
             Text(status)
             Text("NHẬT KÝ", fontWeight = FontWeight.Bold)
             Text(log)
-            Text("Cảnh báo chỉ chạy khi ứng dụng đang mở; không tự nhận voucher, không tự áp mã hay thanh toán. Đồng hồ dùng giờ điện thoại, không phải giờ máy chủ Shopee.",
+            Text("OCR xử lý trên thiết bị. App tự nhận diện các trường phổ biến nhưng bạn cần rà soát vì bố cục voucher có thể khác nhau. Hiện app chưa tự bấm nhận/áp voucher trong Shopee; nút Shopee chỉ mở ứng dụng. Cảnh báo đếm ngược hiện hoạt động khi Voucher Hunter đang mở.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
