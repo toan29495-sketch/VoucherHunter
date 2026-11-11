@@ -119,7 +119,7 @@ fun VoucherHunterScreen() {
                             status = "Đã lưu mục tiêu trong phiên hiện tại"
                             log = "[$clock] Mục tiêu: giảm ${targetAmount}đ, đơn tối thiểu ${minimumOrder}đ, giờ ${targetTime}."
                         }) { Text("Lưu mục tiêu") }
-                        OutlinedButton(onClick = openShopee) {
+                        OutlinedButton(onClick = { openShopee() }) {
                             Icon(Icons.Default.OpenInNew, null); Text(" Mở Shopee")
                         }
                     }
