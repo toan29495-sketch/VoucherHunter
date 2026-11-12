@@ -143,8 +143,15 @@ class ShopeeVoucherAccessibilityService : AccessibilityService() {
             setBackgroundColor(Color.rgb(25, 35, 48))
         }
         val heading = TextView(this).apply {
-            text = "☰ VOUCHER HUNTER • GIỮ ĐỂ DI CHUYỂN"
-            setTextColor(Color.WHITE); textSize = 11f; setTypeface(null, Typeface.BOLD)
+            text = "☰  GIỮ THANH NÀY ĐỂ KÉO BẢNG"
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            minHeight = dp(52)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setBackgroundColor(Color.rgb(35, 105, 160))
+            isClickable = true
         }
         val status = TextView(this).apply {
             text = prefs.getString("automation_status", "Đang theo dõi Shopee")
@@ -180,21 +187,30 @@ class ShopeeVoucherAccessibilityService : AccessibilityService() {
         heading.setOnTouchListener { view, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    view.parent.requestDisallowInterceptTouchEvent(true)
-                    view.setTag(android.R.id.content, floatArrayOf(e.rawX, e.rawY, params.x.toFloat(), params.y.toFloat()))
+                    view.parent?.requestDisallowInterceptTouchEvent(true)
+                    view.setTag(android.R.id.content, floatArrayOf(
+                        e.rawX, e.rawY, params.x.toFloat(), params.y.toFloat()
+                    ))
+                    heading.text = "↕  ĐANG GIỮ — KÉO ĐỂ DI CHUYỂN"
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val origin = view.getTag(android.R.id.content) as? FloatArray
                     if (origin != null) {
-                        params.x = (origin[2] + e.rawX - origin[0]).toInt()
-                        params.y = (origin[3] + e.rawY - origin[1]).toInt()
+                        val display = resources.displayMetrics
+                        val maxX = (display.widthPixels - box.width).coerceAtLeast(0)
+                        val maxY = (display.heightPixels - box.height).coerceAtLeast(0)
+                        params.x = (origin[2] + e.rawX - origin[0]).toInt().coerceIn(0, maxX)
+                        params.y = (origin[3] + e.rawY - origin[1]).toInt().coerceIn(0, maxY)
+                        heading.text = "ĐANG KÉO • X:" + params.x + " Y:" + params.y
                         try { wm.updateViewLayout(box, params) } catch (_: Exception) { }
                     }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     prefs.edit().putInt("panel_x", params.x).putInt("panel_y", params.y).apply()
+                    heading.text = "☰  GIỮ THANH NÀY ĐỂ KÉO BẢNG"
+                    panelStatus?.text = "Đã lưu vị trí bảng: X=" + params.x + ", Y=" + params.y
                     true
                 }
                 else -> true
