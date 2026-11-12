@@ -30,9 +30,13 @@ class ShopeeVoucherAccessibilityService : AccessibilityService() {
         if (event == null) return
         val pkg = event.packageName?.toString().orEmpty()
         if (pkg == "com.shopee.vn") {
-            // Keep the accessibility overlay attached while Shopee changes activities/screens.
-            // Some HONOR/Android transitions emit a brief system-window event between Shopee pages;
-            // hiding the panel on that event made the panel disappear unexpectedly.
+            // HONOR may detach an accessibility overlay during touch/window transitions.
+            // Do not trust the cached panel reference: re-check attachment on every Shopee event.
+            val current = panel
+            if (current != null && !current.isAttachedToWindow) {
+                panel = null
+                panelStatus = null
+            }
             showPanel()
             inspectShopee()
         }
@@ -136,7 +140,12 @@ class ShopeeVoucherAccessibilityService : AccessibilityService() {
     }
 
     private fun showPanel() {
-        if (panel != null) return
+        val existing = panel
+        if (existing != null && existing.isAttachedToWindow) return
+        if (existing != null) {
+            panel = null
+            panelStatus = null
+        }
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val prefs = getSharedPreferences("voucher_settings", Context.MODE_PRIVATE)
         val box = LinearLayout(this).apply {
