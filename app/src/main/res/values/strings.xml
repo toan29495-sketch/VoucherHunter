@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Voucher Hunter</string>
+    <string name="accessibility_service_description">Nhận diện nút thu thập voucher trong Shopee và hỗ trợ thao tác theo lựa chọn của người dùng.</string>
+</resources>
