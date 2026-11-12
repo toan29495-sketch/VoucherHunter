@@ -49,6 +49,10 @@ class ShopeeVoucherAccessibilityService : AccessibilityService() {
             verifyResponse(root, prefs)
             return
         }
+        if (!prefs.getBoolean("auto_click", false)) {
+            panelStatus?.text = "ĐÃ ĐẾN GIỜ\\nBật TỰ ĐỘNG để nhập mã"
+            return
+        }
         val triggerAt = prefs.getLong("trigger_at", 0L)
         val remaining = triggerAt - System.currentTimeMillis()
         if (remaining > 0) {
