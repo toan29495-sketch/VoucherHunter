@@ -177,17 +177,18 @@ class ShopeeVoucherAccessibilityService : AccessibilityService() {
             x = prefs.getInt("panel_x", dp(12)).coerceAtLeast(0)
             y = prefs.getInt("panel_y", dp(100)).coerceAtLeast(0)
         }
-        heading.setOnTouchListener { _, e ->
-            when (e.action) {
+        heading.setOnTouchListener { view, e ->
+            when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    heading.setTag(android.R.id.content, floatArrayOf(e.rawX, e.rawY, params.x.toFloat(), params.y.toFloat()))
+                    view.parent.requestDisallowInterceptTouchEvent(true)
+                    view.setTag(android.R.id.content, floatArrayOf(e.rawX, e.rawY, params.x.toFloat(), params.y.toFloat()))
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val start = heading.getTag(android.R.id.content) as? FloatArray
-                    if (start != null) {
-                        params.x = (start[2] + e.rawX - start[0]).toInt().coerceAtLeast(0)
-                        params.y = (start[3] + e.rawY - start[1]).toInt().coerceAtLeast(0)
+                    val origin = view.getTag(android.R.id.content) as? FloatArray
+                    if (origin != null) {
+                        params.x = (origin[2] + e.rawX - origin[0]).toInt()
+                        params.y = (origin[3] + e.rawY - origin[1]).toInt()
                         try { wm.updateViewLayout(box, params) } catch (_: Exception) { }
                     }
                     true
@@ -196,7 +197,7 @@ class ShopeeVoucherAccessibilityService : AccessibilityService() {
                     prefs.edit().putInt("panel_x", params.x).putInt("panel_y", params.y).apply()
                     true
                 }
-                else -> false
+                else -> true
             }
         }
         try { wm.addView(box, params); panel = box } catch (_: Exception) { panel = null; panelStatus = null }
