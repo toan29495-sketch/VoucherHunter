@@ -245,7 +245,7 @@ fun VoucherHunterScreen() {
                     } else {
                         prefs.edit().putString("amount", amount).putString("minimum", minimum)
                             .putString("time", targetTime).putString("voucher_code", voucherCode)
-                            .putLong("trigger_at", t).putBoolean("code_pending", true)
+                            .putLong("trigger_at", t).putBoolean("code_pending", true).putBoolean("code_filled", false)
                             .putString("automation_status", "Đang chờ đến giờ nhập mã").apply()
                         targetAt = t; armed = true; fired60 = false; fired10 = false; fired0 = false
                         status = "Đã lưu mã và bật canh giờ. Để Shopee mở sẵn ở màn hình nhập mã."
