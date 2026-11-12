@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -112,6 +113,7 @@ fun VoucherHunterScreen() {
     var status by remember { mutableStateOf("Sẵn sàng nhận ảnh hoặc văn bản voucher") }
     var log by remember { mutableStateOf("Chưa có sự kiện") }
     var busy by remember { mutableStateOf(false) }
+    var autoClick by remember { mutableStateOf(prefs.getBoolean("auto_click", false)) }
     var savedVouchers by remember {
         mutableStateOf(run {
             val arr = JSONArray(prefs.getString("voucher_list", "[]") ?: "[]")
@@ -244,7 +246,23 @@ fun VoucherHunterScreen() {
             OutlinedButton(onClick = { armed = false; status = "Đã dừng canh giờ" }, modifier = Modifier.fillMaxWidth()) { Text("DỪNG CANH GIỜ") }
             OutlinedButton(onClick = { alertVibration(context); openShopee() }, modifier = Modifier.fillMaxWidth()) { Text("ĐẾN SHOPEE ĐỂ KIỂM TRA VOUCHER") }
 
-            Text("4. DANH SÁCH MỤC TIÊU", fontWeight = FontWeight.Bold)
+            Text("4. HỖ TRỢ THAO TÁC TRONG SHOPEE", fontWeight = FontWeight.Bold)
+            OutlinedButton(onClick = {
+                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }, modifier = Modifier.fillMaxWidth()) { Text("MỞ CÀI ĐẶT TRỢ NĂNG") }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("Tự bấm nút thu thập voucher", fontWeight = FontWeight.SemiBold)
+                    Text("Chỉ bật sau khi đã cấp quyền trợ năng và kiểm tra nhận diện", style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(checked = autoClick, onCheckedChange = {
+                    autoClick = it
+                    prefs.edit().putBoolean("auto_click", it).apply()
+                })
+            }
+            Text("Nên thử nhận diện trước. Khi bật tự bấm, app chỉ gửi thao tác với nút có nhãn voucher phù hợp; kết quả vẫn phải xác minh trong Shopee.",
+                style = MaterialTheme.typography.bodySmall)
+            Text("5. DANH SÁCH MỤC TIÊU", fontWeight = FontWeight.Bold)
             if (savedVouchers.isEmpty()) Text("Chưa có mục tiêu nào.")
             savedVouchers.forEachIndexed { index, item ->
                 Card(Modifier.fillMaxWidth()) {
