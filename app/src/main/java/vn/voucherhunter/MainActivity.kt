@@ -102,6 +102,7 @@ fun VoucherHunterScreen() {
     var amount by remember { mutableStateOf(prefs.getString("amount", "11000000") ?: "11000000") }
     var minimum by remember { mutableStateOf(prefs.getString("minimum", "5000000") ?: "5000000") }
     var targetTime by remember { mutableStateOf(prefs.getString("time", "00:00") ?: "00:00") }
+    var voucherCode by remember { mutableStateOf(prefs.getString("voucher_code", "") ?: "") }
     var voucherName by remember { mutableStateOf("Voucher SPayLater") }
     var rawText by remember { mutableStateOf("") }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -198,7 +199,7 @@ fun VoucherHunterScreen() {
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("VOUCHER HUNTER 1.2", fontSize = 23.sp, fontWeight = FontWeight.Black)
+            Text("VOUCHER HUNTER 1.3", fontSize = 23.sp, fontWeight = FontWeight.Black)
             Text("Tự đọc voucher từ ảnh / văn bản · quản lý mục tiêu · canh giờ")
             Card(shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
@@ -233,17 +234,26 @@ fun VoucherHunterScreen() {
                 status = "Đã lưu mục tiêu voucher"; log = "Đã thêm: $voucherName"
             }, modifier = Modifier.fillMaxWidth()) { Text("LƯU MỤC TIÊU VOUCHER") }
 
-            Text("3. TỰ ĐỘNG CANH GIỜ", fontWeight = FontWeight.Bold)
+            Text("3. MÃ VOUCHER VÀ CANH GIỜ", fontWeight = FontWeight.Bold)
+            OutlinedTextField(voucherCode, { voucherCode = it.trim() }, label = { Text("Mã Shopee voucher cần nhập") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             Button(onClick = {
                 val t = nextOccurrence(targetTime, System.currentTimeMillis())
                 if (t == null) status = "Giờ không hợp lệ. Ví dụ 09:00 hoặc 09:00:00"
                 else {
-                    prefs.edit().putString("amount", amount).putString("minimum", minimum).putString("time", targetTime).apply()
-                    targetAt = t; armed = true; fired60 = false; fired10 = false; fired0 = false
-                    status = "Đã bật canh giờ và cảnh báo rung"; log = "Bắt đầu canh giờ"
+                    if (voucherCode.isBlank()) {
+                        status = "Bạn cần nhập mã voucher trước khi bật canh giờ."
+                    } else {
+                        prefs.edit().putString("amount", amount).putString("minimum", minimum)
+                            .putString("time", targetTime).putString("voucher_code", voucherCode)
+                            .putLong("trigger_at", t).putBoolean("code_pending", true)
+                            .putString("automation_status", "Đang chờ đến giờ nhập mã").apply()
+                        targetAt = t; armed = true; fired60 = false; fired10 = false; fired0 = false
+                        status = "Đã lưu mã và bật canh giờ. Để Shopee mở sẵn ở màn hình nhập mã."
+                        log = "Đã lên lịch nhập mã lúc " + targetTime
+                    }
                 }
             }, modifier = Modifier.fillMaxWidth()) { Text("BẬT CANH GIỜ") }
-            OutlinedButton(onClick = { armed = false; status = "Đã dừng canh giờ" }, modifier = Modifier.fillMaxWidth()) { Text("DỪNG CANH GIỜ") }
+            OutlinedButton(onClick = { armed = false; prefs.edit().putBoolean("code_pending", false).putString("automation_status", "Đã hủy lịch").apply(); status = "Đã dừng canh giờ" }, modifier = Modifier.fillMaxWidth()) { Text("DỪNG CANH GIỜ") }
             OutlinedButton(onClick = { alertVibration(context); openShopee() }, modifier = Modifier.fillMaxWidth()) { Text("ĐẾN SHOPEE ĐỂ KIỂM TRA VOUCHER") }
 
             Text("4. HỖ TRỢ THAO TÁC TRONG SHOPEE", fontWeight = FontWeight.Bold)
@@ -252,15 +262,15 @@ fun VoucherHunterScreen() {
             }, modifier = Modifier.fillMaxWidth()) { Text("MỞ CÀI ĐẶT TRỢ NĂNG") }
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.weight(1f)) {
-                    Text("Tự bấm nút thu thập voucher", fontWeight = FontWeight.SemiBold)
-                    Text("Chỉ bật sau khi đã cấp quyền trợ năng và kiểm tra nhận diện", style = MaterialTheme.typography.bodySmall)
+                    Text("Tự nhập mã và nhấn Áp dụng", fontWeight = FontWeight.SemiBold)
+                    Text("Đến giờ, dịch vụ trợ năng tìm ô nhập mã và nút Áp dụng trong Shopee", style = MaterialTheme.typography.bodySmall)
                 }
                 Switch(checked = autoClick, onCheckedChange = {
                     autoClick = it
                     prefs.edit().putBoolean("auto_click", it).apply()
                 })
             }
-            Text("Nên thử nhận diện trước. Khi bật tự bấm, app chỉ gửi thao tác với nút có nhãn voucher phù hợp; kết quả vẫn phải xác minh trong Shopee.",
+            Text("Hãy mở sẵn Shopee tại màn hình Chọn Shopee Voucher trước giờ chạy. Ứng dụng sẽ nhập mã và nhấn Áp dụng; kết quả phải chờ Shopee phản hồi.",
                 style = MaterialTheme.typography.bodySmall)
             Text("5. DANH SÁCH MỤC TIÊU", fontWeight = FontWeight.Bold)
             if (savedVouchers.isEmpty()) Text("Chưa có mục tiêu nào.")
