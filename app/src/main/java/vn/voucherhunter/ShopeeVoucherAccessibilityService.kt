@@ -30,12 +30,14 @@ class ShopeeVoucherAccessibilityService : AccessibilityService() {
         if (event == null) return
         val pkg = event.packageName?.toString().orEmpty()
         if (pkg == "com.shopee.vn") {
+            // Keep the accessibility overlay attached while Shopee changes activities/screens.
+            // Some HONOR/Android transitions emit a brief system-window event between Shopee pages;
+            // hiding the panel on that event made the panel disappear unexpectedly.
             showPanel()
             inspectShopee()
-        } else if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val active = rootInActiveWindow?.packageName?.toString()
-            if (active != null && active != "com.shopee.vn") hidePanel()
         }
+        // Do not auto-hide on non-Shopee window events. The user can hide it explicitly
+        // with the panel's HIDE button; the service lifecycle removes it when disabled.
     }
 
     private fun inspectShopee() {
