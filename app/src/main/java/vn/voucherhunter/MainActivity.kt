@@ -45,22 +45,29 @@ class MainActivity : ComponentActivity() {
 }
 
 private fun nextOccurrence(time: String, now: Long): Long? {
-    val parts = time.split(":").mapNotNull { it.toIntOrNull() }
-    if (parts.size !in 2..3 || parts[0] !in 0..23 || parts[1] !in 0..59 ||
-        (parts.size == 3 && parts[2] !in 0..59)) return null
-    val p = if (parts.size == 2) parts + 0 else parts
+    val match = Regex("^(\\d{1,2}):(\\d{2})(?::(\\d{2})(?:\\.(\\d{1,3}))?)?$").matchEntire(time.trim()) ?: return null
+    val hour = match.groupValues[1].toIntOrNull() ?: return null
+    val minute = match.groupValues[2].toIntOrNull() ?: return null
+    val second = match.groupValues[3].ifBlank { "0" }.toIntOrNull() ?: return null
+    val fraction = match.groupValues[4]
+    val milli = fraction.padEnd(3, '0').ifBlank { "0" }.toIntOrNull() ?: return null
+    if (hour !in 0..23 || minute !in 0..59 || second !in 0..59 || milli !in 0..999) return null
     val cal = Calendar.getInstance().apply {
         timeInMillis = now
-        set(Calendar.HOUR_OF_DAY, p[0]); set(Calendar.MINUTE, p[1])
-        set(Calendar.SECOND, p[2]); set(Calendar.MILLISECOND, 0)
+        set(Calendar.HOUR_OF_DAY, hour); set(Calendar.MINUTE, minute)
+        set(Calendar.SECOND, second); set(Calendar.MILLISECOND, milli)
     }
     if (cal.timeInMillis <= now) cal.add(Calendar.DAY_OF_YEAR, 1)
     return cal.timeInMillis
 }
 
 private fun durationText(ms: Long): String {
-    val sec = (ms.coerceAtLeast(0) + 999) / 1000
-    return "%02d:%02d:%02d".format(Locale.US, sec / 3600, (sec / 60) % 60, sec % 60)
+    val value = ms.coerceAtLeast(0)
+    val hours = value / 3_600_000
+    val minutes = (value / 60_000) % 60
+    val seconds = (value / 1_000) % 60
+    val millis = value % 1_000
+    return "%02d:%02d:%02d.%03d".format(Locale.US, hours, minutes, seconds, millis)
 }
 
 private fun alertVibration(context: Context) {
@@ -101,8 +108,8 @@ fun VoucherHunterScreen() {
     val prefs = remember { context.getSharedPreferences("voucher_settings", Context.MODE_PRIVATE) }
     var amount by remember { mutableStateOf(prefs.getString("amount", "11000000") ?: "11000000") }
     var minimum by remember { mutableStateOf(prefs.getString("minimum", "5000000") ?: "5000000") }
-    var targetTime by remember { mutableStateOf(prefs.getString("time", "00:00") ?: "00:00") }
-    var voucherCode by remember { mutableStateOf(prefs.getString("voucher_code", "") ?: "") }
+    var targetTime by remember { mutableStateOf(prefs.getString("time", "00:00:00.000") ?: "00:00:00.000") }
+    
     var voucherName by remember { mutableStateOf("Voucher SPayLater") }
     var rawText by remember { mutableStateOf("") }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -164,7 +171,7 @@ fun VoucherHunterScreen() {
     }
 
     LaunchedEffect(Unit) {
-        while (true) { now = System.currentTimeMillis(); delay(250) }
+        while (true) { now = System.currentTimeMillis(); delay(10) }
     }
 
     LaunchedEffect(now, armed, targetAt) {
@@ -193,13 +200,13 @@ fun VoucherHunterScreen() {
         } catch (_: Exception) { status = "Không mở được Shopee." }
     }
 
-    val clock = SimpleDateFormat("HH:mm:ss", Locale("vi", "VN")).format(Date(now))
-    val countdown = if (armed) durationText(targetAt - now) else "--:--:--"
+    val clock = SimpleDateFormat("HH:mm:ss.SSS", Locale("vi", "VN")).format(Date(now))
+    val countdown = if (armed) durationText(targetAt - now) else if (fired0 && targetAt > 0) "00:00:00.000" else "--:--:--.---"
 
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("VOUCHER HUNTER 1.3", fontSize = 23.sp, fontWeight = FontWeight.Black)
+            Text("VOUCHER HUNTER 1.4", fontSize = 23.sp, fontWeight = FontWeight.Black)
             Text("Tự đọc voucher từ ảnh / văn bản · quản lý mục tiêu · canh giờ")
             Card(shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
@@ -225,7 +232,7 @@ fun VoucherHunterScreen() {
             OutlinedTextField(voucherName, { voucherName = it }, label = { Text("Tên / mô tả voucher") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(amount, { amount = it.filter(Char::isDigit) }, label = { Text("Mức giảm (đ)") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(minimum, { minimum = it.filter(Char::isDigit) }, label = { Text("Đơn tối thiểu (đ)") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(targetTime, { targetTime = it }, label = { Text("Giờ mở voucher (HH:mm hoặc HH:mm:ss)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(targetTime, { targetTime = it }, label = { Text("Giờ mở voucher (HH:mm:ss.SSS)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             Button(onClick = {
                 val item = JSONObject().put("name", voucherName).put("amount", amount)
                     .put("minimum", minimum).put("time", targetTime).put("rawText", rawText)
@@ -234,44 +241,30 @@ fun VoucherHunterScreen() {
                 status = "Đã lưu mục tiêu voucher"; log = "Đã thêm: $voucherName"
             }, modifier = Modifier.fillMaxWidth()) { Text("LƯU MỤC TIÊU VOUCHER") }
 
-            Text("3. MÃ VOUCHER VÀ CANH GIỜ", fontWeight = FontWeight.Bold)
-            OutlinedTextField(voucherCode, { voucherCode = it.trim() }, label = { Text("Mã Shopee voucher cần nhập") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+            Text("3. CANH GIỜ CHÍNH XÁC", fontWeight = FontWeight.Bold)
+            Text("Nhập giờ đến mili giây. Khi đồng hồ chạm mốc, app rung và giữ thông báo để bạn tự nhấn trong Shopee.",
+                style = MaterialTheme.typography.bodySmall)
             Button(onClick = {
                 val t = nextOccurrence(targetTime, System.currentTimeMillis())
-                if (t == null) status = "Giờ không hợp lệ. Ví dụ 09:00 hoặc 09:00:00"
+                if (t == null) status = "Giờ không hợp lệ. Ví dụ 09:30:15.250"
                 else {
-                    if (voucherCode.isBlank()) {
-                        status = "Bạn cần nhập mã voucher trước khi bật canh giờ."
-                    } else {
-                        prefs.edit().putString("amount", amount).putString("minimum", minimum)
-                            .putString("time", targetTime).putString("voucher_code", voucherCode)
-                            .putLong("trigger_at", t).putBoolean("code_pending", true).putBoolean("code_filled", false)
-                            .putString("automation_status", "Đang chờ đến giờ nhập mã").apply()
-                        targetAt = t; armed = true; fired60 = false; fired10 = false; fired0 = false
-                        status = "Đã lưu mã và bật canh giờ. Để Shopee mở sẵn ở màn hình nhập mã."
-                        log = "Đã lên lịch nhập mã lúc " + targetTime
-                    }
+                    prefs.edit().putString("amount", amount).putString("minimum", minimum)
+                        .putString("time", targetTime).putLong("trigger_at", t)
+                        .putBoolean("code_pending", false).apply()
+                    targetAt = t; armed = true; fired60 = false; fired10 = false; fired0 = false
+                    status = "Đã bật đồng hồ mili giây. Hãy mở Shopee và tự nhấn đúng thời điểm."
+                    log = "Đang canh mốc " + targetTime
                 }
-            }, modifier = Modifier.fillMaxWidth()) { Text("BẬT CANH GIỜ") }
-            OutlinedButton(onClick = { armed = false; prefs.edit().putBoolean("code_pending", false).putString("automation_status", "Đã hủy lịch").apply(); status = "Đã dừng canh giờ" }, modifier = Modifier.fillMaxWidth()) { Text("DỪNG CANH GIỜ") }
-            OutlinedButton(onClick = { alertVibration(context); openShopee() }, modifier = Modifier.fillMaxWidth()) { Text("ĐẾN SHOPEE ĐỂ KIỂM TRA VOUCHER") }
-
-            Text("4. HỖ TRỢ THAO TÁC TRONG SHOPEE", fontWeight = FontWeight.Bold)
+            }, modifier = Modifier.fillMaxWidth()) { Text("BẮT ĐẦU CANH GIỜ") }
             OutlinedButton(onClick = {
-                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            }, modifier = Modifier.fillMaxWidth()) { Text("MỞ CÀI ĐẶT TRỢ NĂNG") }
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.weight(1f)) {
-                    Text("Tự nhập mã và nhấn Áp dụng", fontWeight = FontWeight.SemiBold)
-                    Text("Đến giờ, dịch vụ trợ năng tìm ô nhập mã và nút Áp dụng trong Shopee", style = MaterialTheme.typography.bodySmall)
-                }
-                Switch(checked = autoClick, onCheckedChange = {
-                    autoClick = it
-                    prefs.edit().putBoolean("auto_click", it).apply()
-                })
+                armed = false
+                status = "Đã dừng đồng hồ"
+                log = "Đã hủy mốc canh giờ"
+            }, modifier = Modifier.fillMaxWidth()) { Text("DỪNG CANH GIỜ") }
+            OutlinedButton(onClick = { openShopee() }, modifier = Modifier.fillMaxWidth()) {
+                Text("MỞ SHOPEE ĐỂ TỰ NHẤN")
             }
-            Text("Hãy mở sẵn Shopee tại màn hình Chọn Shopee Voucher trước giờ chạy. Ứng dụng sẽ nhập mã và nhấn Áp dụng; kết quả phải chờ Shopee phản hồi.",
-                style = MaterialTheme.typography.bodySmall)
+
             Text("5. DANH SÁCH MỤC TIÊU", fontWeight = FontWeight.Bold)
             if (savedVouchers.isEmpty()) Text("Chưa có mục tiêu nào.")
             savedVouchers.forEachIndexed { index, item ->
@@ -298,7 +291,7 @@ fun VoucherHunterScreen() {
             Text(status)
             Text("NHẬT KÝ", fontWeight = FontWeight.Bold)
             Text(log)
-            Text("OCR xử lý trên thiết bị. App tự nhận diện các trường phổ biến nhưng bạn cần rà soát vì bố cục voucher có thể khác nhau. Hiện app chưa tự bấm nhận/áp voucher trong Shopee; nút Shopee chỉ mở ứng dụng. Cảnh báo đếm ngược hiện hoạt động khi Voucher Hunter đang mở.",
+            Text("Đồng hồ hiển thị và cập nhật mỗi 10ms khi ứng dụng đang mở. Mốc canh giờ được lưu đến mili giây; Android có thể trễ vài mili giây do lịch chạy hệ thống, vì vậy không thể bảo đảm thao tác đúng tuyệt đối từng 1ms. Bạn tự nhấn trong Shopee.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
