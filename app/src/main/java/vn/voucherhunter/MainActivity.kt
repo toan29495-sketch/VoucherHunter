@@ -261,6 +261,21 @@ fun VoucherHunterScreen() {
                 status = "Đã dừng đồng hồ"
                 log = "Đã hủy mốc canh giờ"
             }, modifier = Modifier.fillMaxWidth()) { Text("DỪNG CANH GIỜ") }
+            Button(onClick = {
+                if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(context)) {
+                    val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + context.packageName))
+                    context.startActivity(intent)
+                    status = "Hãy bật quyền Hiển thị trên ứng dụng khác, rồi quay lại bấm nút này."
+                } else {
+                    val serviceIntent = Intent(context, FloatingClockService::class.java)
+                    if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(serviceIntent)
+                    else context.startService(serviceIntent)
+                    status = "Đồng hồ nổi đã bật. Bạn có thể chuyển sang Shopee để theo dõi."
+                }
+            }, modifier = Modifier.fillMaxWidth()) {
+                Text("HIỆN ĐỒNG HỒ NỔI TRÊN SHOPEE")
+            }
             OutlinedButton(onClick = { openShopee() }, modifier = Modifier.fillMaxWidth()) {
                 Text("MỞ SHOPEE ĐỂ TỰ NHẤN")
             }
